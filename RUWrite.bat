@@ -4,7 +4,7 @@ chcp 65001 >nul
 title Подготовка загрузочной флешки
 
 :input
-echo Пожалуйста, введите букву диска (например, E) и нажмите Enter:
+echo Пожалуйста, введите букву диска (например, G) и нажмите Enter:
 set /p driveLetter=
 
 echo Пожалуйста, введите путь к ISO файлу (например, C:\temp\test.iso) и нажмите Enter:
@@ -23,50 +23,56 @@ echo Введите Y для окончательного подтвержден
 choice /c YN /n /m "Подтвердите выбор: "
 if errorlevel 2 goto end
 
-REM Создаем скрипт для Diskpart
-(
-echo select volume %driveLetter%
-echo clean
-echo create partition primary
-echo select partition 1
-echo active
-echo format fs=ntfs quick
-echo assign letter=%driveLetter%
-echo exit
-) > diskpart_script.txt
+REM Выполнение команд Diskpart для форматирования в NTFS
+echo select volume %driveLetter% > diskpart_script.txt
+echo clean >> diskpart_script.txt
+echo create partition primary >> diskpart_script.txt
+echo select partition 1 >> diskpart_script.txt
+echo active >> diskpart_script.txt
+echo format fs=ntfs quick >> diskpart_script.txt
+echo assign letter=%driveLetter% >> diskpart_script.txt
+echo exit >> diskpart_script.txt
 
-REM Выполняем скрипт Diskpart
 diskpart /s diskpart_script.txt
-
-if %errorlevel% neq 0 (
-    echo Ошибка при форматировании диска.
-    pause
-    goto end
+if errorlevel 1 (
+    echo Ошибка при выполнении команд Diskpart. Попытка форматирования в FAT32...
+    format %driveLetter%: /FS:FAT32 /Q /V:USB
 )
-
 del diskpart_script.txt
 
-echo Монтирование ISO файла %isoPath%:
-PowerShell Mount-DiskImage -ImagePath "%isoPath%" -PassThru | PowerShell Get-Volume -FileSystemLabel "CD-ROM" | ForEach-Object { $_.DriveLetter } > tmpDriveLetter.txt
-set /p isoDriveLetter=<tmpDriveLetter.txt
-del tmpDriveLetter.txt
-
-if "%isoDriveLetter%"=="" (
-    echo Ошибка при монтировании ISO файла.
+REM Монтирование ISO файла
+echo Монтирование ISO файла...
+PowerShell -Command "Mount-DiskImage -ImagePath '%isoPath%'"
+if errorlevel 1 (
+    echo Ошибка при монтировании ISO файла. Проверьте правильность пути к ISO файлу и доступность диска.
     pause
     goto end
 )
 
+REM Ожидание монтирования ISO файла
+timeout /t 5
+
+REM Получение буквы смонтированного ISO диска
+for /f "tokens=2 delims=:" %%I in ('PowerShell -Command "Get-Volume | Where-Object { $_.DriveType -eq 'CD-ROM' } | Select-Object -ExpandProperty DriveLetter"') do set isoDriveLetter=%%I
+
+if "%isoDriveLetter%"=="" (
+    echo Не удалось определить букву смонтированного ISO диска.
+    pause
+    goto end
+)
+
+echo Буква смонтированного ISO диска: %isoDriveLetter%
+
+REM Копирование файлов с ISO на флешку
 echo Копирование файлов с ISO на флешку %driveLetter%:
 xcopy /e /h /k /o /x "%isoDriveLetter%:\*" "%driveLetter%:\"
 
-echo Размонтирование ISO файла:
-PowerShell Dismount-DiskImage -ImagePath "%isoPath%"
+REM Размонтирование ISO файла
+PowerShell -Command "Dismount-DiskImage -ImagePath '%isoPath%'"
 
 echo Процесс завершен.
 pause
-goto end
 
 :end
-echo Операция отменена.
+echo Операция завершена.
 pause
